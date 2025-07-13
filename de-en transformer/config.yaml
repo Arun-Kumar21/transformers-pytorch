@@ -1,0 +1,16 @@
+data:
+  src_lang: de
+  tgt_lang: en
+  vocab_size: 8000
+
+model:
+  num_layers: 4
+  d_model: 256
+  num_heads: 4
+  d_ff: 1024
+
+train:
+  batch_size: 64
+  lr: 3e-4
+  warmup_steps: 4000
+  max_epochs: 50
