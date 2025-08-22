@@ -33,44 +33,54 @@ class SublayerConnection(nn.Module):
 
 # attention: Computes scaled dot-product attention for input queries, keys, and values.
 def attention(q, k, v, mask=None, dropout=None):
-    "Compute Scaled Dot Product Attention (Attention score)"
-    dim_k = k.size(-1)
-    score = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(dim_k)
-    if mask is not None:
-        score = score.masked_fill(mask == 0, -1e9)
-    att_w = score.softmax(dim=-1)
-    if dropout is not None:
-        att_w = dropout(att_w)
+  "Compute Scaled Dot Product Attention (Attention score)"
+  dim_k = k.size(-1)
 
-    return torch.matmul(att_w, v), att_w
+  # Q (B, S, dim_k) , K (B, S, dim_k)
+  # For Q @ K, we need to transpose K -> K (B, dim_k, S) ---> more precisely Q(S, D) * K (D, S) => (S, S)
+  score = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(dim_k) # score = (Q* K) / sqrt(d_k)  --> single_layer (d_k) = n_embd || multi_layer(d_k) = n_embd / n_head
+  if mask is not None:
+    score = score.masked_fill(mask == 0, -1e9)
+  att_w = score.softmax(dim=-1)
+  if dropout is not None:
+    att_w = dropout(att_w)
+
+
+  # att_w (B, S, S) , V (B, S, d_k or n_embd [in case of single attention head])
+  # att_w @ V ---> (B, S, d_k or n_embd)
+  return torch.matmul(att_w, v), att_w
 
 # MultiHeadedAttention: Allows the model to jointly attend to information from different representation subspaces.
 class MultiHeadedAttention(nn.Module):
-    def __init__(self, n_head, n_embd, dropout=0.1):
-        super(MultiHeadedAttention, self).__init__()
-        assert n_embd % n_head == 0, "can't divide n_embd by n_head"
-        self.n_head = n_head
-        self.n_embd = n_embd
-        self.dim_k = n_embd // n_head
-        self.Ws = clones(nn.Linear(n_embd, n_embd), 4)
-        self.attn = None
-        self.dropout = nn.Dropout(dropout)
+  def __init__(self, n_head, n_embd, dropout=0.1):
+    super(MultiHeadedAttention, self).__init__()
+    assert n_embd % n_head == 0, "can't divide n_embd by n_head"
+    self.n_head = n_head
+    self.n_embd = n_embd
+    self.dim_k = n_embd // n_head # d_k
+    self.Ws = clones(nn.Linear(n_embd, n_embd), 4)
+    self.attn = None
+    self.dropout = nn.Dropout(dropout)
 
-    def forward(self, q, k, v, mask=None):
-        if mask is not None:
-            mask = mask.unsqueeze(1)
-        n_batches = q.size(0)
+  def forward(self, q, k, v, mask=None):
+    if mask is not None:
+      mask = mask.unsqueeze(1)
+    n_batches = q.size(0)
 
-        Q = self.Ws[0](q).view(n_batches, -1, self.n_head, self.dim_k).transpose(1, 2)
-        K = self.Ws[1](k).view(n_batches, -1, self.n_head, self.dim_k).transpose(1, 2)
-        V = self.Ws[2](v).view(n_batches, -1, self.n_head, self.dim_k).transpose(1, 2)
+      
+    # projecting q, k, v (passing through FC-linear layer)
+    Q = self.Ws[0](q).view(n_batches, -1, self.n_head, self.dim_k).transpose(1, 2) # Q = q @ W_q 
+    K = self.Ws[1](k).view(n_batches, -1, self.n_head, self.dim_k).transpose(1, 2) # K = k @ W_k
+    V = self.Ws[2](v).view(n_batches, -1, self.n_head, self.dim_k).transpose(1, 2) # V = v @ W_v
 
-        x, self.attn = attention(Q, K, V, mask=mask, dropout=self.dropout)
+    # W_q, W_k, W_v are learnable weight matrices (from linear layer)
 
-        "Concatenating all heads"
-        x = x.transpose(1, 2).contiguous().view(n_batches, -1, self.n_head * self.dim_k)
+    x, self.attn = attention(Q, K, V, mask=mask, dropout=self.dropout)
 
-        return self.Ws[-1](x)
+    "Concatenating all heads"
+    x = x.transpose(1, 2).contiguous().view(n_batches, -1, self.n_head * self.dim_k)
+
+    return self.Ws[-1](x)
 
 # FeedForwardLayer: Position-wise feed-forward network applied to each position separately.
 class FeedForwardLayer(nn.Module):
